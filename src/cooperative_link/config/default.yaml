@@ -1,0 +1,227 @@
+# =============================================================================
+# data_generate: dual pose (AVP / KF-GINS) + host ROS bag -> CenterPoint NuScenes-style infos
+# Planar pose: host/target use lat/lon + yaw only (roll/pitch ignored); heading 0=N, +east.
+# Extrinsics use 2x2 blocks + t_lidar xy; gt_boxes z = gt_center_z_m (flat ground).
+# =============================================================================
+# Run (with ROS1 Python on PYTHONPATH, e.g. source /opt/ros/noetic/setup.bash):
+#   python -m data_generate --config data_generate/example_config.yaml
+#
+# Acceptance:
+#   1) Fill paths below; time_offset_sec aligns ros_stamp + offset with pose col1 (Unix epoch s).
+#   2) Run command; check samples/LIDAR_TOP/*.bin exist and pickle.load infos: gt_boxes.shape[1]==9.
+#   3) Training: copy a nuScenes voxel config, set data_root / ann_file to root_path and infos_val_...
+#      Use nsweeps: 1 in config to match sweeps: [] here. If db_sampler is enabled, run
+#      create_groundtruth_database after generating infos_train; or set db_sampler: null in config.
+# =============================================================================
+
+# Output dataset root (same role as data/nuScenes). lidar_path in pkl is relative to this.
+root_path: /media/pbj/Data/CenterPoint/data/ugv_custom
+
+# Subdir layout (nuScenes-like): samples/LIDAR_TOP/<token>.bin
+lidar_subdir: samples/LIDAR_TOP
+
+# Host vehicle bag and LiDAR topic
+bag_path: /media/pbj/Data/UGV1-2025-04-18/2025-04-18-13-59-27.bag
+lidar_topic: /lslidar_point_cloud
+
+# Pose files: AVP *avp.txt (default) or legacy KF_GINS_Navresult.nav
+host_nav_path: /media/pbj/Data/UGV1-2025-04-18/2025-04-18-13-59-27/2025-04-18-13-59-27avp.txt
+target_nav_path: /media/pbj/Data/UGV2-2025-04-18/2025-04-18-13-59-21/2025-04-18-13-59-21avp.txt
+nav_format: auto   # auto | avp | kfgins
+# nav_ref_alt_m: 149.0   # optional ellipsoid height when AVP alt column is ~0
+
+# nav_time = ros lidar stamp (s) + time_offset_sec  ->  pose file column 1 (Unix epoch)
+time_offset_sec: 0.0
+
+# Optional: use every N-th lidar message (1 = all). Then skip_start_sec, then lidar_output_hz.
+lidar_decimate: 1
+
+# Drop frames with ros_t < (first_decimated_ros_t + skip_start_sec). 0 = disabled.
+skip_start_sec: 120
+
+# After decimate + skip: keep frames greedily so spacing >= 1/hz seconds (1.0 => ~1 Hz). 0 = disabled.
+lidar_output_hz: 10.0
+
+# Train / val split ratio by frame count (shuffle=False, first part train)
+train_ratio: 0.8
+random_seed: 0
+
+# nsweeps for CenterPoint (1 => sweeps list empty)
+nsweeps: 1
+
+# Output pickle names (under root_path; use basename only)
+output_train_pkl: infos_train_01sweeps_withvelo_filter_True.pkl
+output_val_pkl: infos_val_01sweeps_withvelo_filter_True.pkl
+
+# Single class name (must appear in training config class_names, e.g. car)
+class_name: robot
+
+# Target 3D size as nuScenes Box.wlh order: [width, length, height] in meters
+target_size_wlh: [0.5, 0.7, 0.65]
+
+# GT box center z in lidar frame (m); horizontal xy from 2D relative pose
+gt_center_z_m: 0.0
+
+# Target nav origin to geometry center in target body FLU (m); only xy used in 2D pipeline
+target_imu_to_center_offset: [0.0, 0.0, 0.0]
+
+# IMU body (KF-GINS FRD) -> host vehicle FLU: v_vehicle = R_imu_to_vehicle @ v_imu (3x3 row-major lists)
+R_imu_to_vehicle:
+  - [1.0, 0.0, 0.0]
+  - [0.0, 1.0, 0.0]
+  - [0.0, 0.0, 1.0]
+
+# Host vehicle FLU -> LiDAR: planar chain uses R[:2,:2] and t_lidar xy only
+# p_vehicle origin at host nav position; roll/pitch of host not used
+R_lidar_vehicle:
+  - [0.0, -1.0, 0.0]
+  - [1.0,  0.0, 0.0]
+  - [0.0,  0.0, 1.0]
+t_lidar_in_vehicle: [0.2, 0.0, -0.3]
+
+# Extra yaw (rad) added to box yaw in lidar frame (sensor mounting azimuth)
+lidar_yaw_bias: 0.1745
+
+# LLA origin for local ENU: "host_first" uses first interpolated host pose at first lidar time
+enu_origin_mode: host_first
+
+# Cooperative link ROS1 node (see cooperative_link_ros_node.py)
+cooperative_link_ros:
+  lidar_topic: /lslidar_point_cloud
+  host_navsat_topic: /host/navsat
+  host_yaw_topic: /host/yaw_deg
+  target_navsat_topic: /target/navsat
+  target_yaw_topic: /target/yaw_deg
+  # Multi-partner: use {id}; single-partner (multi.enabled: false) uses flat names via ros_config defaults
+  pub_relative_pose_nav: /cooperative_target/{id}/relative_pose_nav
+  pub_relative_pose_det: /cooperative_target/{id}/relative_pose_det
+  pub_relative_pose: /cooperative_target/{id}/relative_pose
+  pub_relative_polar: /cooperative_target/{id}/relative_polar
+  pub_link_state: /cooperative_target/{id}/link_state
+  pub_cooperative_targets: /cooperative_targets
+  pub_markers: /cooperative_target/{id}/markers
+  pub_dynamic_targets: /cooperative_dynamic/targets
+  pub_dynamic_markers: /cooperative_dynamic/markers
+  publish_markers: true
+  publish_dynamic: true
+  pub_marker: /cooperative_target/marker
+  publish_marker: false
+  nav_buffer_sec: 60.0
+  # Lidar nav_time may be slightly ahead of last NAV sample; clamp within this slop (s)
+  max_query_slop_sec: 0.15
+  max_points: 80000
+  output_frame_id: ""
+
+# UWB-style range from dual NAV (ENU body-center distance, nav_sim)
+cooperative_link_uwb:
+  enabled: true
+  host_agent_id: 0
+  from_agent_id: 0
+  to_agent_id: 1
+  pub_uwb_range: /cooperative_uwb/range
+  pub_uwb_ranges: /cooperative_uwb/ranges
+  pub_uwb_range_per_partner: /cooperative_uwb/{id}/range
+  publish_per_partner_topics: true
+  publish_legacy_single: false
+  range_noise_std: 0.0
+  publish_only_when_nav_ok: true
+  skip_invalid: false
+  source_label: nav_sim
+
+# Multi-partner NAV (UWB host-star; link FSM still single target = first partner)
+cooperative_link_multi:
+  enabled: true
+  host_agent_id: 0
+  partners:
+    - id: 1
+      name: ugv2
+      nav_path: /media/pbj/Data/UGV2-2025-04-18/2025-04-18-13-59-21/2025-04-18-13-59-21avp.txt
+      navsat_topic: /cooperative_partner/1/navsat
+      yaw_topic: /cooperative_partner/1/yaw_deg
+    # - id: 2
+    #   name: ugv3
+    #   nav_path: /media/pbj/Data/UGV3-placeholder/ugv3avp.txt
+    #   navsat_topic: /cooperative_partner/2/navsat
+    #   yaw_topic: /cooperative_partner/2/yaw_deg
+
+# KF tracking + polynomial smooth + trajectory alignment (MATLAB ports)
+# Observations: gated cluster centroids only (CV model); NAV is not used in KF update.
+# Defaults match matlab/Dynamic_Object_Recognition_and_Tracking.m (Q=0.1*I6, R=0.2*I3, gate=2.5).
+cooperative_link_filter:
+  enabled: true
+  score_thresh: 0.5
+  assoc_gate_m: 2.5
+  max_missed: 8
+  q_scale: 0.1
+  r_scale: 0.2
+  fit_win: 10
+  poly_order: 2
+  filter_output: ekf
+  predict_on_miss: true
+  max_speed_mps: 15.0
+  coast_publish: true
+  coast_gate_extra_m: 1.0
+
+cooperative_link_dynamic:
+  enabled: true
+  publish_score_thresh: 0.0
+  track_score_thresh: 0.0
+  min_motion_score: 0.9
+  rviz_tracks_only: true
+  max_dynamic_markers: 6
+  marker_lifetime_sec: 0.25
+  marker_delete_stale: true
+
+cooperative_link_partner_match:
+  enabled: true
+  window_frames: 30
+  min_frames: 10
+  max_align_cost: 5.0
+  partner_lock_frames: 5
+  partner_unlock_miss: 10
+  require_traj_valid_for_link: true
+  require_match_score: true
+
+cooperative_link_calibration:
+  enabled: true
+  window_frames: 30
+  min_frames: 10
+  lambda_t: 2.0
+  lambda_v: 3.5
+  dtw_window: 0.3
+  skip_penalty: 1.2
+  max_iter: 50
+  tol: 1.0e-6
+  pub_coord_frame_estimate: /cooperative_target/{id}/coord_frame_estimate
+  pub_relative_pose_filtered: /cooperative_target/{id}/relative_pose_filtered
+
+# Cooperative link: dynamic detect + prior match before lock (see replay_dynamic_assoc.py)
+cooperative_link:
+  range_tol_m: 3.0
+  bearing_tol_deg: 15.0
+  z_tol_m: 1.5
+  motion_thresh_m: 0.15
+  min_cluster_points: 8
+  lock_frames: 5
+  score_thresh: 0.6
+  assoc_max_jump_m: 2.0
+  coast_max_frames: 10
+  reacquire_miss_frames: 15
+  cluster_eps_m: 0.35
+  nn_max_dist_m: 0.25
+  weights:
+    w_r: 0.4
+    w_b: 0.3
+    w_m: 0.3
+  sigmas:
+    sigma_r_m: 2.0
+    sigma_bearing_deg: 8.0
+
+# --- Training hook-up (read before train) ---
+# - Ready-made config: configs/nusc/voxelnet/nusc_centerpoint_ugv_custom.py
+#   Edit data_root / train_anno / val_anno there if your root_path or pkl names differ.
+# - Train:  python3 tools/train.py configs/nusc/voxelnet/nusc_centerpoint_ugv_custom.py --work_dir work_dirs/ugv_centerpoint
+# - Test:   python3 tools/dist_test.py configs/nusc/voxelnet/nusc_centerpoint_ugv_custom.py --work_dir work_dirs/ugv_test --checkpoint <.pth> --no_eval
+# - Custom metrics: python3 tools/eval_custom_predictions.py --predictions work_dirs/ugv_test/prediction.pkl --infos /media/pbj/Data/CenterPoint/data/ugv_custom/infos_val_01sweeps_withvelo_filter_True.pkl
+# - nsweeps in config must be 1 to match empty sweeps here; db_sampler is None in that config.
+# - Official nuScenes eval needs real nuScenes metadata; use --no_eval or custom script above.

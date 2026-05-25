@@ -1,0 +1,12 @@
+int32 track_id
+int32 cluster_label
+float64 x
+float64 y
+float64 z
+float64 range_m
+float64 bearing_rad
+float64 match_score
+float64 motion_score
+bool is_link_partner
+float64 traj_align_cost
+bool traj_match_valid

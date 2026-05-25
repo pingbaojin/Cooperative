@@ -1,0 +1,10 @@
+#!/usr/bin/env python3
+"""rosrun entry: delegate to plot/plot_coop_targets.py."""
+from pathlib import Path
+import runpy
+import sys
+
+_root = Path(__file__).resolve().parents[1]
+_script = _root / "plot" / "plot_coop_targets.py"
+sys.argv[0] = str(_script)
+runpy.run_path(str(_script), run_name="__main__")

@@ -1,0 +1,17 @@
+<launch>
+  <arg name="config" default="$(find cooperative_link)/config/default.yaml" />
+  <arg name="use_sim_time" default="true"/>
+  <arg name="rviz" default="true"/>
+  <arg name="rviz_link_id" default="1" doc="Multi-partner: link_target_id for MarkerArray topic"/>
+  <arg name="rviz_config" default="$(find cooperative_link)/rviz/cooperative_link_multi.rviz" doc="Single-partner: use cooperative_link.rviz"/>
+
+  <include file="$(find cooperative_link)/launch/includes/sim_time_and_rviz.launch">
+    <arg name="use_sim_time" value="$(arg use_sim_time)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+    <arg name="rviz_config" value="$(arg rviz_config)"/>
+  </include>
+
+  <node pkg="cooperative_link" type="cooperative_link_node" name="cooperative_link_node" output="screen">
+    <param name="config" value="$(arg config)" />
+  </node>
+</launch>

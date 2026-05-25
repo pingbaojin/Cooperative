@@ -1,0 +1,12 @@
+<launch>
+  <arg name="use_sim_time" default="true"/>
+  <arg name="rviz" default="true"/>
+  <arg name="rviz_config" default="$(find cooperative_link)/rviz/cooperative_link.rviz"/>
+
+  <param name="/use_sim_time" value="$(arg use_sim_time)"/>
+
+  <group if="$(arg rviz)">
+    <node pkg="rviz" type="rviz" name="rviz" output="screen"
+          args="-d $(arg rviz_config)" required="false"/>
+  </group>
+</launch>

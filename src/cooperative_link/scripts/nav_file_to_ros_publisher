@@ -1,0 +1,5 @@
+#!/usr/bin/env python3
+from cooperative_link.nav_file_publisher import main
+
+if __name__ == "__main__":
+    main()
